@@ -8,7 +8,8 @@ from typing import List, Dict, Optional, Any
 
 import requests
 from pymongo import MongoClient
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
+from pymongo.errors import ConnectionFailure, ConfigurationError
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember, InputMediaPhoto, InputMediaVideo
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, 
     ContextTypes, CallbackQueryHandler
@@ -33,36 +34,42 @@ class Config:
     MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
     DATABASE_NAME = os.getenv("DATABASE_NAME", "instagram_bot")
     
-    # Channel Subscription (Sirf Channel ID, Username optional)
+    # Channel Subscription
     CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0")) if os.getenv("CHANNEL_ID") else None
-    CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")  # Optional: For button link
+    CHANNEL_LINK = os.getenv("CHANNEL_LINK", "")
     
     # APIs
     INSTAGRAM_API_URL = os.getenv("INSTAGRAM_API_URL", "https://prexzyapis.com/download/aiov2")
-    
-    # Other Platforms (Future)
-    PLATFORM_APIS = {
-        "youtube": os.getenv("YOUTUBE_API_URL", ""),
-        "tiktok": os.getenv("TIKTOK_API_URL", ""),
-        "facebook": os.getenv("FACEBOOK_API_URL", ""),
-    }
 
 # ============================================
 # DATABASE MANAGER
 # ============================================
 class Database:
     def __init__(self):
+        self.client = None
+        self.db = None
+        self.users = None
+        self.stats = None
+        self.connected = False
+        
         try:
-            self.client = MongoClient(Config.MONGODB_URI)
+            self.client = MongoClient(
+                Config.MONGODB_URI,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+                socketTimeoutMS=5000
+            )
+            
+            self.client.admin.command('ping')
+            self.connected = True
+            
             self.db = self.client[Config.DATABASE_NAME]
             self.users = self.db.users
             self.stats = self.db.stats
             
-            # Create indexes
             self.users.create_index("user_id", unique=True)
             self.users.create_index("username")
             
-            # Initialize stats if not exists
             if not self.stats.find_one({"_id": "bot_stats"}):
                 self.stats.insert_one({
                     "_id": "bot_stats",
@@ -70,12 +77,26 @@ class Database:
                     "total_downloads": 0,
                     "created_at": datetime.now()
                 })
+            
+            logging.info("✅ MongoDB Connected Successfully!")
+            
+        except (ConnectionFailure, ConfigurationError) as e:
+            logging.error(f"❌ MongoDB Connection Error: {e}")
+            logging.warning("⚠️ Bot will run without database features!")
+            self.connected = False
         except Exception as e:
-            logging.error(f"MongoDB Connection Error: {e}")
-            raise
+            logging.error(f"❌ MongoDB Error: {e}")
+            self.connected = False
+
+    def _check_connection(self):
+        if not self.connected:
+            logging.warning("⚠️ Database not connected, operation skipped")
+            return False
+        return True
 
     def add_user(self, user_id: int, username: str = None, first_name: str = None):
-        """Add or update user"""
+        if not self._check_connection():
+            return False
         try:
             result = self.users.update_one(
                 {"user_id": user_id},
@@ -93,8 +114,6 @@ class Database:
                 },
                 upsert=True
             )
-            
-            # Update total users count if new user
             if result.upserted_id:
                 self.stats.update_one(
                     {"_id": "bot_stats"},
@@ -106,7 +125,8 @@ class Database:
             return False
 
     def remove_user(self, user_id: int):
-        """Remove user (when blocked)"""
+        if not self._check_connection():
+            return False
         try:
             result = self.users.delete_one({"user_id": user_id})
             if result.deleted_count > 0:
@@ -121,21 +141,37 @@ class Database:
             return False
 
     def get_user(self, user_id: int):
-        """Get user by ID"""
-        return self.users.find_one({"user_id": user_id})
+        if not self._check_connection():
+            return None
+        try:
+            return self.users.find_one({"user_id": user_id})
+        except Exception as e:
+            logging.error(f"Error getting user: {e}")
+            return None
 
     def get_all_users(self, skip_blocked: bool = True):
-        """Get all users (excluding blocked if skip_blocked=True)"""
-        query = {"is_blocked": {"$ne": True}} if skip_blocked else {}
-        return list(self.users.find(query))
+        if not self._check_connection():
+            return []
+        try:
+            query = {"is_blocked": {"$ne": True}} if skip_blocked else {}
+            return list(self.users.find(query))
+        except Exception as e:
+            logging.error(f"Error getting users: {e}")
+            return []
 
     def get_total_users(self, skip_blocked: bool = True):
-        """Get total user count"""
-        query = {"is_blocked": {"$ne": True}} if skip_blocked else {}
-        return self.users.count_documents(query)
+        if not self._check_connection():
+            return 0
+        try:
+            query = {"is_blocked": {"$ne": True}} if skip_blocked else {}
+            return self.users.count_documents(query)
+        except Exception as e:
+            logging.error(f"Error counting users: {e}")
+            return 0
 
     def mark_user_blocked(self, user_id: int):
-        """Mark user as blocked"""
+        if not self._check_connection():
+            return False
         try:
             self.users.update_one(
                 {"user_id": user_id},
@@ -147,7 +183,8 @@ class Database:
             return False
 
     def increment_downloads(self, user_id: int):
-        """Increment download count for user and total"""
+        if not self._check_connection():
+            return False
         try:
             self.users.update_one(
                 {"user_id": user_id},
@@ -163,11 +200,16 @@ class Database:
             return False
 
     def get_stats(self):
-        """Get bot statistics"""
-        stats = self.stats.find_one({"_id": "bot_stats"})
-        if stats:
-            del stats["_id"]
-        return stats or {}
+        if not self._check_connection():
+            return {"total_users": 0, "total_downloads": 0, "created_at": datetime.now()}
+        try:
+            stats = self.stats.find_one({"_id": "bot_stats"})
+            if stats:
+                del stats["_id"]
+            return stats or {}
+        except Exception as e:
+            logging.error(f"Error getting stats: {e}")
+            return {}
 
 # ============================================
 # PLATFORM API MANAGER
@@ -175,7 +217,6 @@ class Database:
 class PlatformAPIManager:
     @staticmethod
     def detect_platform(url: str) -> str:
-        """Detect platform from URL"""
         url_lower = url.lower()
         if "instagram.com" in url_lower or "instagr.am" in url_lower:
             return "instagram"
@@ -190,7 +231,6 @@ class PlatformAPIManager:
 
     @staticmethod
     async def fetch_instagram(url: str) -> Dict:
-        """Fetch Instagram media using API"""
         try:
             response = requests.get(
                 Config.INSTAGRAM_API_URL,
@@ -219,7 +259,6 @@ class PlatformAPIManager:
 
     @staticmethod
     async def fetch_media(url: str) -> Dict:
-        """Auto-detect platform and fetch media"""
         platform = PlatformAPIManager.detect_platform(url)
         
         if platform == "instagram":
@@ -233,11 +272,9 @@ class PlatformAPIManager:
 class Utils:
     @staticmethod
     def format_caption(original_caption: str, bot_username: str, platform: str = "Instagram") -> str:
-        """Format caption with bot credit and expandable blockquote"""
         if not original_caption or original_caption.strip() == "":
             original_caption = "No caption"
         
-        # Truncate if too long
         max_length = 900
         if len(original_caption) > max_length:
             original_caption = original_caption[:max_length - 3] + "..."
@@ -252,7 +289,6 @@ Click the button below to add me!"""
 
     @staticmethod
     def get_add_button(bot_username: str) -> InlineKeyboardMarkup:
-        """Create Add to Group button"""
         keyboard = [[
             InlineKeyboardButton(
                 "➕ Add Bot to Your Group",
@@ -263,9 +299,8 @@ Click the button below to add me!"""
 
     @staticmethod
     async def check_subscription(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-        """Check if user is subscribed to required channel (private or public)"""
         if not Config.CHANNEL_ID:
-            return True  # No channel configured
+            return True
             
         try:
             member = await context.bot.get_chat_member(
@@ -283,36 +318,27 @@ Click the button below to add me!"""
 
     @staticmethod
     def get_subscription_button() -> InlineKeyboardMarkup:
-        """Get subscription check button"""
-        keyboard = [[
-            InlineKeyboardButton(
-                "✅ Check Subscription",
-                callback_data="check_subscription"
-            )
-        ]]
+        keyboard = []
         
-        # Add channel link button if available
         if Config.CHANNEL_LINK:
-            keyboard.insert(0, [
+            keyboard.append([
                 InlineKeyboardButton(
                     "📢 Join Channel",
                     url=Config.CHANNEL_LINK
                 )
             ])
-        elif Config.CHANNEL_ID:
-            # Try to get channel invite link
-            keyboard.insert(0, [
-                InlineKeyboardButton(
-                    "📢 Join Channel",
-                    url=f"https://t.me/c/{str(Config.CHANNEL_ID)[4:]}"
-                )
-            ])
+        
+        keyboard.append([
+            InlineKeyboardButton(
+                "✅ Check Subscription",
+                callback_data="check_subscription"
+            )
+        ])
             
         return InlineKeyboardMarkup(keyboard)
 
     @staticmethod
     async def download_media_with_retry(url: str, max_retries: int = 3) -> Optional[bytes]:
-        """Download media with retry"""
         for attempt in range(max_retries):
             try:
                 response = requests.get(
@@ -339,14 +365,11 @@ db = Database()
 # BOT COMMAND HANDLERS
 # ============================================
 
-# -------------------- /start --------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
     user = update.effective_user
     chat_type = update.effective_chat.type
     is_group = chat_type in ["group", "supergroup"]
     
-    # Add user to database
     db.add_user(
         user_id=user.id,
         username=user.username,
@@ -375,7 +398,6 @@ Just send me any Instagram URL and I'll download it for you!
     if is_group:
         welcome_msg += "\n\n📊 **Group Mode:** Active"
     else:
-        # Private chat - Show subscription status
         if Config.CHANNEL_ID:
             is_subscribed = await Utils.check_subscription(context, user.id)
             if not is_subscribed:
@@ -387,9 +409,7 @@ Just send me any Instagram URL and I'll download it for you!
         reply_markup=Utils.get_add_button(context.bot.username)
     )
 
-# -------------------- Check Subscription Callback --------------------
 async def check_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle subscription check callback"""
     query = update.callback_query
     await query.answer()
     
@@ -408,9 +428,7 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
             reply_markup=Utils.get_subscription_button()
         )
 
-# -------------------- /stats (Admin Only) --------------------
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /stats command (Admin only)"""
     user_id = update.effective_user.id
     
     if user_id not in Config.ADMIN_IDS:
@@ -431,16 +449,13 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(stats_msg, parse_mode=ParseMode.MARKDOWN)
 
-# -------------------- /broadcast (Admin Only) --------------------
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /broadcast command (Admin only)"""
     user_id = update.effective_user.id
     
     if user_id not in Config.ADMIN_IDS:
         await update.message.reply_text("❌ You are not authorized to use this command.")
         return
     
-    # Check if replying to a message
     if not update.message.reply_to_message:
         await update.message.reply_text(
             "❌ Please reply to a message you want to broadcast.\n\n"
@@ -448,7 +463,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Get all users (excluding blocked)
     users = db.get_all_users(skip_blocked=True)
     total_users = len(users)
     
@@ -456,7 +470,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No users found to broadcast to.")
         return
     
-    # Send confirmation
     confirm_msg = await update.message.reply_text(
         f"📢 **Broadcast Started!**\n\n"
         f"👥 Total Users: {total_users}\n"
@@ -465,7 +478,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
     
-    # Get the message to broadcast
     reply_msg = update.message.reply_to_message
     success_count = 0
     failed_count = 0
@@ -475,28 +487,23 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             user_id = user["user_id"]
             
-            # Forward the message
             await reply_msg.copy(
                 chat_id=user_id,
                 reply_to_message_id=None
             )
             
             success_count += 1
-            
-            # Add small delay to avoid rate limiting
             await asyncio.sleep(0.05)
             
         except Exception as e:
             error_str = str(e).lower()
             if "blocked" in error_str or "not found" in error_str:
-                # User blocked the bot or deleted account
                 db.remove_user(user_id)
                 blocked_count += 1
             else:
                 failed_count += 1
                 logging.error(f"Broadcast failed to {user_id}: {e}")
     
-    # Update confirmation message
     await confirm_msg.edit_text(
         f"✅ **Broadcast Completed!**\n\n"
         f"📤 Total Users: {total_users}\n"
@@ -505,22 +512,18 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🚫 Blocked/Removed: {blocked_count}"
     )
 
-# -------------------- Download Handler --------------------
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Instagram URLs"""
     user = update.effective_user
     chat_type = update.effective_chat.type
     is_group = chat_type in ["group", "supergroup"]
     text = update.message.text or update.message.caption or ""
     
-    # Check if it's an Instagram URL
     url_pattern = r'(https?://(?:www\.)?(?:instagram\.com|instagr\.am)/[^\s]+)'
     urls = re.findall(url_pattern, text)
     
     if not urls:
         return
     
-    # Check subscription only in private chats
     if not is_group and Config.CHANNEL_ID:
         is_subscribed = await Utils.check_subscription(context, user.id)
         if not is_subscribed:
@@ -532,14 +535,12 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
     
-    # Process each URL
     for url in urls:
         processing_msg = await update.message.reply_text(
             f"⏳ Processing: {url[:50]}...\nFetching media..."
         )
         
         try:
-            # Fetch media
             result = await PlatformAPIManager.fetch_media(url)
             
             if not result["success"]:
@@ -551,16 +552,13 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             media_list = result["media_list"]
             caption = result["caption"]
             platform = result["platform"]
-            author = result.get("author", "Unknown")
             
-            # Format caption
             formatted_caption = Utils.format_caption(
                 caption, 
                 context.bot.username,
                 platform
             )
             
-            # Add to DB
             db.add_user(
                 user_id=user.id,
                 username=user.username,
@@ -568,10 +566,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             db.increment_downloads(user.id)
             
-            # Get button
             add_button = Utils.get_add_button(context.bot.username)
             
-            # Handle multiple media (carousel)
             if len(media_list) > 1:
                 await processing_msg.edit_text(
                     f"📸 Found {len(media_list)} media items. Downloading..."
@@ -598,7 +594,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             failed += 1
                             continue
                         
-                        # Determine file extension
                         ext = "mp4" if media_type == "mp4" else "jpg"
                         file_path = f"/tmp/media_{user.id}_{idx}.{ext}"
                         
@@ -606,7 +601,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f.write(content)
                         temp_files.append(file_path)
                         
-                        # Prepare media group item
                         if media_type == "mp4":
                             media_group.append(
                                 InputMediaVideo(
@@ -629,14 +623,12 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         failed += 1
                 
                 if media_group:
-                    # Send media group
                     await context.bot.send_media_group(
                         chat_id=update.effective_chat.id,
                         media=media_group,
                         reply_to_message_id=update.message.message_id
                     )
                     
-                    # Send button separately (media group doesn't support buttons)
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
                         text="🤖 **Want this bot in your group too?**\nClick the button below to add me!",
@@ -645,7 +637,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_to_message_id=update.message.message_id
                     )
                 
-                # Cleanup temp files
                 for file_path in temp_files:
                     try:
                         os.remove(file_path)
@@ -660,7 +651,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await processing_msg.delete()
                     
             else:
-                # Single media
                 media = media_list[0]
                 media_url = media.get("url")
                 media_type = media.get("type", "mp4")
@@ -695,9 +685,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"❌ Error: {str(e)}\nPlease try again later."
             )
 
-# -------------------- Error Handler --------------------
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle errors"""
     logging.error(f"Update {update} caused error {context.error}")
     
     if update and update.effective_message:
@@ -738,16 +726,31 @@ def main():
     # Error handler
     application.add_error_handler(error_handler)
     
-    # Start bot
-    print("🤖 Bot Started!")
-    print(f"📌 Bot Username: @{application.bot.username}")
-    print("📌 Send any Instagram URL to test")
+    # ✅ FIX: Initialize bot before accessing properties
+    async def bot_init():
+        await application.initialize()
+        bot_info = await application.bot.get_me()
+        print("🤖 Bot Started!")
+        print(f"📌 Bot Username: @{bot_info.username}")
+        print("📌 Send any Instagram URL to test")
+        
+        if Config.CHANNEL_ID:
+            print(f"📢 Force Subscribe Channel ID: {Config.CHANNEL_ID}")
+            print("   (Only for Private Chats)")
     
-    if Config.CHANNEL_ID:
-        print(f"📢 Force Subscribe Channel ID: {Config.CHANNEL_ID}")
-        print("   (Only for Private Chats)")
+    # Run the bot with initialization
+    async def run():
+        await bot_init()
+        await application.start()
+        await application.updater.start_polling()
+        await asyncio.Event().wait()  # Keep running
     
-    application.run_polling()
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n🛑 Bot Stopped!")
+    finally:
+        asyncio.run(application.shutdown())
 
 if __name__ == "__main__":
     main()
