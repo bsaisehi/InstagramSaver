@@ -36,7 +36,7 @@ class Config:
     CHAT_USERNAME = os.getenv("CHAT_USERNAME", os.getenv("CHANNEL_USERNAME", "")).replace("@", "")
     
     INSTAGRAM_API_URL = os.getenv("INSTAGRAM_API_URL", "https://prexzyapis.com/download/aiov2")
-    WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://picsum.photos/800/400")
+    WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://i.ibb.co/bR2jsbDg/Chat-GPT-Image-Aug-23-2026-12-28-29-PM.png")
 
 # ============================================
 # MINIMAL DATABASE MANAGER (Only Numeric IDs)
@@ -335,7 +335,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     async with aiohttp.ClientSession() as session:
         for url in urls:
-            processing_msg = await update.message.reply_text("⏳ <b>Fetching media...</b>", parse_mode=ParseMode.HTML)
+            processing_msg = await update.message.reply_text("⏳ <b>Downloading media...</b>", parse_mode=ParseMode.HTML)
             
             try:
                 result = await PlatformAPIManager.fetch_instagram(session, url)
