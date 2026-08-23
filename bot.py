@@ -136,25 +136,24 @@ class Utils:
     @staticmethod
     def format_caption(original_caption: str, bot_username: str) -> str:
         if not original_caption or original_caption.strip() == "":
-            original_caption = "No caption"
+            original_caption = " "
         
         max_length = 800
         if len(original_caption) > max_length:
             original_caption = original_caption[:max_length - 3] + "..."
         
-        return f"""<b>📥 Downloaded via @{bot_username}</b>
+        return f"""⚡ <b>Powered By: @VoidXDevs</b>
 
 📝 <b>Caption:</b>
-<blockquote expandable>{original_caption}</blockquote>
-
-⚡ <b>Powered By: @VoidXDevs</b>"""
+<blockquote expandable>{original_caption}</blockquote>"""
 
     @staticmethod
     def get_add_button(bot_username: str) -> InlineKeyboardMarkup:
         keyboard = [[
             InlineKeyboardButton(
-                "➕ Add Bot to Your Group",
-                url=f"https://t.me/{bot_username}?startgroup=true"
+                "➕ Add Me to Your Group",
+                url=f"https://t.me/{bot_username}?startgroup=true",
+                style="success"
             )
         ]]
         return InlineKeyboardMarkup(keyboard)
@@ -242,7 +241,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat_btn:
             buttons.extend(chat_btn.inline_keyboard)
     
-    buttons.append([InlineKeyboardButton("➕ Add Bot to Your Group", url=f"https://t.me/{context.bot.username}?startgroup=true")])
+    buttons.append([InlineKeyboardButton("➕ Add Me to Your Group", url=f"https://t.me/{context.bot.username}?startgroup=true", style="success")])
     reply_markup = InlineKeyboardMarkup(buttons)
     
     try:
