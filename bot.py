@@ -228,7 +228,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Welcome <b>{user.full_name}</b>!\n\n"
         "I'm an Instagram Media Downloader Bot!\n\n"
         "<b>Features:</b>\n"
-        "• Download Instagram Reels/Videos/Image\n"
+        "• Download Instagram Reels/Photos/Videos\n"
         "• Carousel Posts Supported\n\n"
         "<b>How to use:</b>\n"
         "Just send me any Instagram URL and I'll send it for you!\n\n"
