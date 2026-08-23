@@ -141,12 +141,10 @@ class Utils:
         if len(original_caption) > max_length:
             original_caption = original_caption[:max_length - 3] + "..."
         
-        return f"""<b>📥 Downloaded By </b>
-<b>By @{bot_username}</b>
+        return f"""<b>📥 Downloaded via @{context.bot.username}</b>
 
-<blockquote expandable>{original_caption}</blockquote>
-
-<b>🤖 Developed By @VoidXDevs</b>"""
+📝 <b>Caption:</b>
+<blockquote expandable>{original_caption}</blockquote>"""
 
     @staticmethod
     def get_add_button(bot_username: str) -> InlineKeyboardMarkup:
@@ -227,12 +225,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_subscribed = await Utils.check_subscription(context, user.id)
     
     caption = (
-        "Hi! This is a bot for downloading videos/photos/audio from popular social networks."
-        "How to use it:\n\n"
-        "Send any instagram post link to the bot and get the downloaded file! The bot can download from:\n"
-        "• Instagram\n\n"
-        "Developed By @VoidXDevs"
-    )
+    f"Welcome <b>{user.full_name}</b>!\n\n"
+    "I'm an Instagram Media Downloader Bot!\n\n"
+    "<b>Features:</b>\n"
+    "• Download Instagram Reels/Videos/Image\n"
+    "• Carousel Posts Supported\n\n"
+    "<b>How to use:</b>\n"
+    "Just send me any Instagram URL and I'll send it for you!\n\n"
+    "<b>Developed By: @VoidXDevs</b>"
+)
 
     buttons = []
     if not is_subscribed and not is_group:
