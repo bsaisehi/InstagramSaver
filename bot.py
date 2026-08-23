@@ -13,6 +13,7 @@ from telegram.ext import (
     ContextTypes
 )
 from telegram.constants import ParseMode
+from telegram.error import NetworkError, Conflict
 from dotenv import load_dotenv
 
 # ============================================
@@ -29,16 +30,16 @@ class Config:
     MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
     DATABASE_NAME = os.getenv("DATABASE_NAME", "instagram_bot")
     
-    # Can be a Channel ID or Supergroup ID (e.g., -100123456789)
+    # Dual support for Channel or Group ID
     CHAT_ID = int(os.getenv("CHAT_ID", os.getenv("CHANNEL_ID", "0"))) if (os.getenv("CHAT_ID") or os.getenv("CHANNEL_ID")) else None
     CHAT_LINK = os.getenv("CHAT_LINK", os.getenv("CHANNEL_LINK", ""))
     CHAT_USERNAME = os.getenv("CHAT_USERNAME", os.getenv("CHANNEL_USERNAME", "")).replace("@", "")
     
     INSTAGRAM_API_URL = os.getenv("INSTAGRAM_API_URL", "https://prexzyapis.com/download/aiov2")
-    WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://i.ibb.co/bR2jsbDg/Chat-GPT-Image-Aug-23-2026-12-28-29-PM.png")
+    WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://picsum.photos/800/400")
 
 # ============================================
-# MINIMAL DATABASE MANAGER (Only Store Numeric ID)
+# MINIMAL DATABASE MANAGER (Only Numeric IDs)
 # ============================================
 class Database:
     def __init__(self):
@@ -141,25 +142,25 @@ class Utils:
         if len(original_caption) > max_length:
             original_caption = original_caption[:max_length - 3] + "..."
         
-        return f"""<b>📥 Downloaded via @{context.bot.username}</b>
+        return f"""<b>📥 Downloaded via @{bot_username}</b>
 
 📝 <b>Caption:</b>
-<blockquote expandable>{original_caption}</blockquote>"""
+<blockquote expandable>{original_caption}</blockquote>
+
+⚡ <b>Powered By: @VoidXDevs</b>"""
 
     @staticmethod
     def get_add_button(bot_username: str) -> InlineKeyboardMarkup:
         keyboard = [[
             InlineKeyboardButton(
-                "➕ Add Me to Your Group",
-                url=f"https://t.me/{bot_username}?startgroup=true",
-                style="success"
+                "➕ Add Bot to Your Group",
+                url=f"https://t.me/{bot_username}?startgroup=true"
             )
         ]]
         return InlineKeyboardMarkup(keyboard)
 
     @staticmethod
     async def check_subscription(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-        """Universal Force Subscribe Check for Channels & Groups"""
         if not Config.CHAT_ID:
             return True
             
@@ -171,7 +172,6 @@ class Utils:
                 chat_id=Config.CHAT_ID,
                 user_id=user_id
             )
-            # Valid states for both channels and supergroups
             return member.status in [
                 ChatMember.MEMBER,
                 ChatMember.ADMINISTRATOR,
@@ -179,7 +179,7 @@ class Utils:
                 ChatMember.RESTRICTED
             ]
         except Exception as e:
-            logging.error(f"Force Sub Error (Ensure Bot is Admin in Channel/Group): {e}")
+            logging.error(f"Force Sub Check Failed: {e}")
             return False
 
     @staticmethod
@@ -226,15 +226,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_subscribed = await Utils.check_subscription(context, user.id)
     
     caption = (
-    f"Welcome <b>{user.full_name}</b>!\n\n"
-    "I'm an Instagram Media Downloader Bot!\n\n"
-    "<b>Features:</b>\n"
-    "• Download Instagram Reels/Videos/Photos\n"
-    "• Carousel Posts Supported\n\n"
-    "<b>How to use:</b>\n"
-    "Just send me any Instagram URL and I'll send it for you!\n\n"
-    "<b>Developed By: @VoidXDevs</b>"
-)
+        f"Welcome <b>{user.full_name}</b>!\n\n"
+        "I'm an Instagram Media Downloader Bot!\n\n"
+        "<b>Features:</b>\n"
+        "• Download Instagram Reels/Videos/Image\n"
+        "• Carousel Posts Supported\n\n"
+        "<b>How to use:</b>\n"
+        "Just send me any Instagram URL and I'll send it for you!\n\n"
+        "<b>Developed By: @VoidXDevs</b>"
+    )
 
     buttons = []
     if not is_subscribed and not is_group:
@@ -252,8 +252,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup
         )
-    except Exception as e:
-        logging.error(f"Error sending photo: {e}")
+    except Exception:
         await update.message.reply_text(
             text=caption,
             parse_mode=ParseMode.HTML,
@@ -388,19 +387,33 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.edit_text("❌ Something went wrong while downloading.")
 
 # ============================================
+# ERROR HANDLER
+# ============================================
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logging.error(f"Exception while handling an update: {context.error}")
+    if isinstance(context.error, Conflict):
+        logging.warning("⚠️ Conflict error: Bot instance already running somewhere else!")
+    elif isinstance(context.error, NetworkError):
+        logging.warning("⚠️ Network error occurred. Retrying connection...")
+
+# ============================================
 # MAIN FUNCTION
 # ============================================
 def main():
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
     application = Application.builder().token(Config.BOT_TOKEN).build()
     
+    # Handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_media))
     
+    # Register Error Handler
+    application.add_error_handler(error_handler)
+    
     print("🤖 Bot Started!")
-    application.run_polling()
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
