@@ -35,7 +35,7 @@ class Config:
     CHAT_USERNAME = os.getenv("CHAT_USERNAME", os.getenv("CHANNEL_USERNAME", "")).replace("@", "")
     
     INSTAGRAM_API_URL = os.getenv("INSTAGRAM_API_URL", "https://prexzyapis.com/download/aiov2")
-    WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://via.placeholder.com/800x400/1a1a2e/ffffff?text=Instagram+Downloader+Bot")
+    WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://i.ibb.co/bR2jsbDg/Chat-GPT-Image-Aug-23-2026-12-28-29-PM.png")
 
 # ============================================
 # MINIMAL DATABASE MANAGER (Only Store Numeric ID)
@@ -150,8 +150,9 @@ class Utils:
     def get_add_button(bot_username: str) -> InlineKeyboardMarkup:
         keyboard = [[
             InlineKeyboardButton(
-                "➕ Add Bot to Your Group",
-                url=f"https://t.me/{bot_username}?startgroup=true"
+                "➕ Add Me to Your Group",
+                url=f"https://t.me/{bot_username}?startgroup=true",
+                style="success"
             )
         ]]
         return InlineKeyboardMarkup(keyboard)
@@ -228,7 +229,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     f"Welcome <b>{user.full_name}</b>!\n\n"
     "I'm an Instagram Media Downloader Bot!\n\n"
     "<b>Features:</b>\n"
-    "• Download Instagram Reels/Videos/Image\n"
+    "• Download Instagram Reels/Videos/Photos\n"
     "• Carousel Posts Supported\n\n"
     "<b>How to use:</b>\n"
     "Just send me any Instagram URL and I'll send it for you!\n\n"
